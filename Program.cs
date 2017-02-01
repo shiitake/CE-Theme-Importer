@@ -1,19 +1,11 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using System.Xml;
-using System.Xml.Linq;
-using System.Xml.Schema;
-using System.IO;
 using System.Security.Principal;
 
 namespace conemu_theme_import
 {
     class Program
     {
-        static string debugFolder { get; } = @"C:\git\conemu-theme-import\test";
+        private static string DebugFolder { get; } = @"C:\git\conemu-theme-import\test";
         static void Main(string[] args)
         {
             PrintLogo();
@@ -42,7 +34,7 @@ namespace conemu_theme_import
         static string GetConfigFolder()
         {
 #if DEBUG
-            return debugFolder;
+            return DebugFolder;
 #else
             var winIdent = WindowsIdentity.GetCurrent();
             string name = "";
@@ -83,7 +75,7 @@ namespace conemu_theme_import
                         break;
                     case "-xml":
                     case "-x":
-                        config.XMLValidation = args[i + 1];
+                        config.XmlValidation = args[i + 1];
                         break;
                     case "-list":
                     case "-l":

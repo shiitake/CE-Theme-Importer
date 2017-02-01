@@ -1,26 +1,23 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using System.Xml;
 using System.Xml.Linq;
 using System.Xml.Schema;
 using System.IO;
-using System.Security.Principal;
 
 namespace conemu_theme_import
 {
     public class ColorPalette
     {
-        private const string _fileName = "ConEmu.xml";
-        private string _configFolder;        
-        private string _configFile;
-        private string _localPath;
-        XDocument Xdoc { get; set; }
-        XElement Vanilla { get; set; }
-        string Build { get; set; }
-        int ColorCount { get; set; }
+        private const string FileName = "ConEmu.xml";
+        private readonly string _configFile;
+        private readonly string _localPath;
+        private XDocument Xdoc { get; }
+        private XElement Vanilla { get; set; }
+        private string Build { get; }
+        private int ColorCount { get; set; }
 
         private const string DefaultSchema = @"<?xml version='1.0' encoding='IBM437'?>
 <xs:schema attributeFormDefault='unqualified' elementFormDefault='qualified' xmlns:xs='http://www.w3.org/2001/XMLSchema'>
@@ -42,9 +39,9 @@ namespace conemu_theme_import
   </xs:element>
 </xs:schema>";
 
-        XmlSchemaSet SchemaSet { get; set; }
+        private XmlSchemaSet SchemaSet { get; set; }
 
-        List<string> InstalledThemes { get; set; }
+        private List<string> InstalledThemes { get; set; }
 
 
         private void Log(string message)
@@ -55,30 +52,23 @@ namespace conemu_theme_import
 
         public ColorPalette(ConfigOptions config)
         {
-            _configFolder = config.ConfigurationFolder;
-            _configFile = Path.Combine(_configFolder, _fileName);
+            var configFolder = config.ConfigurationFolder;
+            _configFile = Path.Combine(configFolder, FileName);
             _localPath = Path.GetDirectoryName(System.Reflection.Assembly.GetEntryAssembly().Location);
-            SchemaSet = SetXmlSchema(config.XMLValidation);           
-
-            Xdoc = XDocument.Load(_configFile, LoadOptions.PreserveWhitespace);
+            SchemaSet = SetXmlSchema(config.XmlValidation);           
+            
+            Xdoc = XDocument.Load(_configFile);
             Vanilla = Xdoc.Descendants().First(key => (string)key.Attribute("name") == ".Vanilla");
-            Build = Vanilla.AttributeOrEmpty("build").Value.ToString();
+            Build = Vanilla.AttributeOrEmpty("build").Value;
 
             if (config.BackupConfiguration)
             {
-                BackupConfiguration(_configFolder, _configFile);
+                BackupConfiguration(configFolder, _configFile);
             }
 
             ColorCount = Vanilla.Descendants().Count(key => (string)key.Attribute("name") == "Colors");
 
-            if (ColorCount == 0)
-            {                
-                InstalledThemes = new List<string>();
-            }
-            else
-            {
-                InstalledThemes = GetInstalledPalettes();
-            }
+            InstalledThemes = ColorCount == 0 ? new List<string>() : GetInstalledPalettes();
         }
 
         public void ImportFile(string importFile)
@@ -87,7 +77,7 @@ namespace conemu_theme_import
             {
                 InitializeColorPalette();
             }
-            Log(string.Format("Importing theme from {0}.", importFile));
+            Log($"Importing theme from {importFile}.");
             var foundFile = false;
             //make sure file exists
             var myFileInfo = new FileInfo(importFile);
@@ -95,6 +85,7 @@ namespace conemu_theme_import
             {
                 foundFile = true;
                 AddNewPalette(importFile);
+                Xdoc.Save(_configFile);
             }
             else
             {
@@ -105,11 +96,12 @@ namespace conemu_theme_import
                 {
                     foundFile = true;
                     AddNewPalette(localFile);
+                    Xdoc.Save(_configFile);
                 }
             }
             if (!foundFile)
             {
-                Log(string.Format("We were unable to find the file specified: {0}", importFile));
+                Log($"We were unable to find the file specified: {importFile}");
             }
         }
 
@@ -120,16 +112,17 @@ namespace conemu_theme_import
                 InitializeColorPalette();
             }
             var path = (string.IsNullOrWhiteSpace(importFolder)) ? _localPath : importFolder;
-            Log(string.Format("Looking for any themes in the folder: {0} ", path));
+            Log($"Looking for any themes in the folder: {path} ");
             var palettes = GetPalettes(path);
 
             if (palettes.Any())
             {
-                Log(string.Format("Found {0} files to import", palettes.Count()));
+                Log($"Found {palettes.Count()} files to import");
                 foreach (var palette in palettes)
                 {
                     AddNewPalette(palette);
                 }
+                Xdoc.Save(_configFile);
             }
             else
             {
@@ -166,14 +159,14 @@ namespace conemu_theme_import
             try
             {
                 var backupdate = DateTime.Now;
-                var backupFileName = string.Format("ConEmu_Backup_{0}.xml", backupdate.ToString("yyyyMMdd"));
+                var backupFileName = $"ConEmu_Backup_{backupdate.ToString("yyyyMMdd")}.xml";
                 var destination = Path.Combine(configFolder, backupFileName);                
-                Log(string.Format("Creating backup of configuration file to {0}", destination));
+                Log($"Creating backup of configuration file to {destination}");
                 File.Copy(configFile, destination);
             }
             catch (Exception e)
             {
-                Log(string.Format("Failed to backup configuration file with following errors: {0}", e.Message));
+                Log($"Failed to backup configuration file with following errors: {e.Message}");
             }
         }
 
@@ -198,13 +191,13 @@ namespace conemu_theme_import
 
         private List<string> GetInstalledPalettes()
         {
-            var colors = from key in Vanilla.Descendants()
-                         where (string)key.Attribute("name") == "Colors"
-                         select key;
+            var colors = Vanilla.Descendants().Where(key => (string) key.Attribute("name") == "Colors");
 
-            var name = from value in colors.Descendants().Elements("value")
-                       where (string)value.Attribute("name") == "Name"
-                       select value.Attribute("data").Value.ToString();
+            var name =
+                colors.Descendants()
+                    .Elements("value")
+                    .Where(value => (string) value.Attribute("name") == "Name" && value.AttributeOrEmpty("data").Value != "")
+                    .Select(value => value.AttributeOrEmpty("data").Value);
 
             return name.ToList();
         }
@@ -213,18 +206,17 @@ namespace conemu_theme_import
         {
             //validate xml
             if (IsValidXml(file))
-            {                
-                string paletteName;
-                Vanilla = AddPalette(Vanilla, file);                                
-                Xdoc.Save(_configFile);
+            {               
+                Vanilla = AddPalette(Vanilla, file);                               
             }
             else
             {
-                Log(string.Format("Did not import {0} because it did not contain a valid theme.", file));
+                Log($"Did not import {file} because it did not contain a valid theme.");
             }
 
         }
 
+        [SuppressMessage("ReSharper", "PossibleNullReferenceException")]
         private XElement AddPalette(XElement xelem, string file)
         {
             var paletteNumber = ColorCount++;
@@ -232,23 +224,23 @@ namespace conemu_theme_import
             var palette = XElement.Load(file);
             var palettename = from key in palette.Descendants()
                    where (string)key.Attribute("name") == "Name"
-                   select key.Attribute("data").Value.ToString();
+                   select key.Attribute("data").Value;
             var name = string.Join(",",palettename);
             if (InstalledThemes.Contains(name))
             {
-                Log(string.Format("The {0} theme is already installed and will not be installed again.", name));
+                Log($"The {name} theme is already installed and will not be installed again.");
                 return xelem;
             }
             else
             {
-                Log(string.Format("Adding theme: {0}", name));
+                Log($"Adding theme: {name}");
                 InstalledThemes.Add(name);
-                palette.Attribute("name").SetValue("Palette" + paletteNumber.ToString());
+                palette.Attribute("name").SetValue("Palette" + paletteNumber);
                 palette.Attribute("modified").SetValue(modifiedDate.ToString("yyyy-MM-dd H:mm:ss"));
                 palette.Attribute("build").SetValue(Build);
-                var Colors = xelem.Descendants().First(key => (string)key.Attribute("name") == "Colors");
-                Colors.Element("value").Attribute("data").SetValue(paletteNumber.ToString("00000000"));
-                Colors.Add(palette);
+                var colors = xelem.Descendants().First(key => (string)key.Attribute("name") == "Colors");
+                colors.Element("value").Attribute("data").SetValue(paletteNumber.ToString("00000000"));
+                colors.Add(palette);
                 return xelem;
             }
         }
@@ -262,15 +254,17 @@ namespace conemu_theme_import
             XmlReader reader = XmlReader.Create(xmlFile, settings);
             try
             {
-                Log(string.Format("Validating XML for {0}", xmlFile));
-                while (reader.Read()) ;
-                Log(string.Format("{0} is valid XML.", xmlFile));
+                Log($"Validating XML for {xmlFile}");
+                while (reader.Read())
+                {
+                }
+                Log($"{xmlFile} is valid XML.");
                 return true;
             }
             catch (XmlSchemaException e)
             {
-                Log(string.Format("The schema for {0} isn't valid. Line number: {1}, Line position: {2}", xmlFile, e.LineNumber, e.LinePosition));
-                Log(string.Format("Message = {0}", e.Message));
+                Log($"The schema for {xmlFile} isn't valid. Line number: {e.LineNumber}, Line position: {e.LinePosition}");
+                Log($"Message = {e.Message}");
                 return false;
             }
 
@@ -291,27 +285,6 @@ namespace conemu_theme_import
                 }
             }
             return SchemaSet;
-        }
-
-        private void GenerateSchema(string xmlFile)
-        {
-            var reader = XmlReader.Create(xmlFile);
-            var schemaSet = new XmlSchemaSet();
-            var schema = new XmlSchemaInference();
-            schemaSet = schema.InferSchema(reader);
-            FileStream file = new FileStream("config.xsd", FileMode.Create, FileAccess.ReadWrite);
-            //using (XmlTextWriter xwriter = new XmlTextWriter(file, new UTF8Encoding()))
-            using (StreamWriter sw = new StreamWriter(file))
-            {
-                //Console.SetOut(sw);
-
-                foreach (XmlSchema s in schemaSet.Schemas())
-                {
-
-                    //s.Write(sw);
-                    s.Write(Console.Out);
-                }
-            }
         }
     }
 }
